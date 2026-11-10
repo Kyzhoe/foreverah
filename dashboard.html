@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForeverAH</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0e0f13; --bar: #14161b; --panel: #16181d; --row: #1c1e24; --row-hover: #262932;
+    --row-sel: #1f3f54; --input: #0a0b0e; --border: #30343e; --accent: #59c7fa;
+    --text: #ebedf2; --muted: #8f96a6; --good: #66d973; --warn: #ffb340; --bad: #f26666;
+    --gold: #ffd100; --silver: #c7c7cf; --copper: #c87533;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+  button, input, select { font: inherit; color: var(--text); }
+  button { background: #20232a; border: 1px solid var(--border); padding: 5px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { color: var(--muted); cursor: default; }
+  button.active { background: #1c3a4d; border-color: var(--accent); }
+  input, select { background: var(--input); border: 1px solid var(--border); padding: 5px 8px; outline: none; }
+  input:focus, select:focus { border-color: var(--accent); }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--bar); border-bottom: 1px solid var(--accent); }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--accent); }
+  #status { color: var(--muted); flex: 1; }
+  #banner { display: none; padding: 8px 16px; background: #2a2416; color: var(--warn); border-bottom: 1px solid #4a3d1d; }
+  #banner.error { background: #2c1818; color: var(--bad); border-color: #4d2424; }
+
+  nav { display: flex; gap: 6px; padding: 10px 16px 0; }
+  nav button { min-width: 92px; }
+  .controls { display: flex; align-items: center; gap: 10px; padding: 10px 16px; color: var(--muted); flex-wrap: wrap; }
+  .controls .count { margin-left: auto; }
+
+  main { flex: 1; display: flex; min-height: 0; padding: 0 16px 16px; gap: 12px; }
+  /* keep columns together on wide screens */
+  nav, .controls, main { width: 100%; max-width: 1500px; margin: 0 auto; }
+  td.name { width: 34%; }
+  .table-wrap { flex: 1; overflow: auto; border: 1px solid var(--border); background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--bar); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; text-align: right; padding: 7px 10px; cursor: pointer; user-select: none; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th.left, td.left { text-align: left; }
+  th.sorted { color: var(--accent); }
+  td { padding: 5px 10px; text-align: right; border-bottom: 1px solid #1b1d23; white-space: nowrap; }
+  tr.item { background: var(--row); cursor: pointer; }
+  tr.item:hover { background: var(--row-hover); }
+  tr.item.sel { background: var(--row-sel); }
+  td.star { width: 26px; text-align: center; color: var(--muted); cursor: pointer; }
+  td.star.on { color: var(--gold); }
+  td.name { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  .good { color: var(--good); } .muted { color: var(--muted); }
+  .more { padding: 10px; text-align: center; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  .g { color: var(--gold); } .s { color: var(--silver); } .c { color: var(--copper); }
+
+  aside { width: 380px; border: 1px solid var(--border); background: var(--panel); padding: 14px; overflow: auto; display: none; }
+  aside.open { display: block; }
+  aside h2 { margin: 0 0 2px; font-size: 16px; }
+  aside .sub { color: var(--muted); margin-bottom: 12px; }
+  aside .stats { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin-bottom: 14px; }
+  aside .stats div:nth-child(odd) { color: var(--muted); }
+  aside .actions { display: flex; gap: 8px; margin-bottom: 14px; }
+  .chart { width: 100%; height: 200px; display: block; }
+  .chart text { fill: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .legend .note::before { display: none; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; background: currentColor; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ForeverAH</h1>
+  <div id="status">Connecting…</div>
+  <button id="notifyBtn" title="Desktop notifications for new deals and vendor flips while this page is open">Notifications: off</button>
+  <button id="updateBtn">Update now</button>
+</header>
+<div id="banner"></div>
+<nav id="tabs"></nav>
+<div class="controls" id="controls"></div>
+<main>
+  <div class="table-wrap" id="tableWrap"></div>
+  <aside id="detail"></aside>
+</main>
+
+<script>
+const QUALITY = ['#9d9d9d', '#ffffff', '#1eff00', '#0070dd', '#a335ee', '#ff8000', '#e6cc80', '#00ccff'];
+const PAGE = 200;
+
+// ---------- small helpers ----------
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function store(key, value) {
+  try {
+    if (value === undefined) return JSON.parse(localStorage.getItem('fah.' + key));
+    localStorage.setItem('fah.' + key, JSON.stringify(value));
+  } catch { return undefined; }
+}
+function money(c) {
+  if (c == null) return '<span class="muted">–</span>';
+  c = Math.round(c);
+  const g = Math.floor(c / 10000), s = Math.floor((c % 10000) / 100), cp = c % 100;
+  let out = '';
+  if (g) out += `${g.toLocaleString()}<span class="g">g</span> `;
+  if (g || s) out += `${s}<span class="s">s</span> `;
+  out += `${cp}<span class="c">c</span>`;
+  return out;
+}
+function moneyText(c) {
+  c = Math.round(c);
+  const g = Math.floor(c / 10000), s = Math.floor((c % 10000) / 100), cp = c % 100;
+  return (g ? g + 'g ' : '') + (g || s ? s + 's ' : '') + cp + 'c';
+}
+function parseMoney(text) {
+  const t = String(text || '').toLowerCase().replace(/\s+/g, '');
+  if (!t) return null;
+  if (/^\d+$/.test(t)) return Number(t);
+  const m = t.match(/^(?:(\d+)g)?(?:(\d+)s)?(?:(\d+)c)?$/);
+  if (!m) return null;
+  return Number(m[1] || 0) * 10000 + Number(m[2] || 0) * 100 + Number(m[3] || 0);
+}
+function ago(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h ${m % 60}m ago` : `${Math.floor(h / 24)}d ago`;
+}
+const nameOf = (it) => it.name || `Item #${it.id}`;
+const colorOf = (it) => it.quality != null ? QUALITY[it.quality] || '#fff' : '#8f96a6';
+
+// ---------- state ----------
+let items = [], status = null, lastUpdated = null;
+let tab = store('tab') || 'browse';
+let selectedId = null, shown = PAGE;
+let watch = new Set(store('watch') || []);
+const settings = Object.assign({ dealPct: 70, dealMinProfit: 1000, vendorMinProfit: 1, search: '', kind: 'all' }, store('settings') || {});
+const sorts = Object.assign({ browse: ['name', 1], deals: ['profit', -1], vendor: ['vprofit', -1], watch: ['name', 1] }, store('sorts') || {});
+let notify = store('notify') === true && 'Notification' in window && Notification.permission === 'granted';
+let knownDeals = null; // ids already announced
+
+// ---------- derived lists ----------
+function dealsOf(list) {
+  const pct = settings.dealPct / 100;
+  return list.filter((it) => it.avg > 0 && it.min <= it.avg * pct)
+    .map((it) => ({ ...it, profit: Math.floor(it.avg * 0.95) - it.min, pct: it.min / it.avg }))
+    .filter((it) => it.profit >= settings.dealMinProfit);
+}
+function vendorOf(list) {
+  return list.filter((it) => it.vendor > 0 && it.vendor - it.min >= settings.vendorMinProfit)
+    .map((it) => ({ ...it, vprofit: it.vendor - it.min }));
+}
+
+const COLUMNS = {
+  name:    { label: 'Item', left: true, get: (it) => nameOf(it).toLowerCase(),
+             cell: (it) => `<span style="color:${colorOf(it)}">${esc(nameOf(it))}</span>` },
+  min:     { label: 'Cheapest', get: (it) => it.min, cell: (it) => money(it.min) },
+  market:  { label: 'Market', get: (it) => it.market, cell: (it) => money(it.market) },
+  avg:     { label: 'Average', get: (it) => it.avg, cell: (it) => money(it.avg) },
+  qty:     { label: 'Listed', get: (it) => it.qty, cell: (it) => it.qty.toLocaleString() },
+  profit:  { label: 'Profit each', get: (it) => it.profit, cell: (it) => `<span class="good">${money(it.profit)}</span>` },
+  pct:     { label: '% of avg', get: (it) => it.pct, cell: (it) => Math.round(it.pct * 100) + '%' },
+  vendor:  { label: 'Vendor pays', get: (it) => it.vendor ?? -1, cell: (it) => money(it.vendor) },
+  vprofit: { label: 'Profit each', get: (it) => it.vprofit, cell: (it) => `<span class="good">${money(it.vprofit)}</span>` },
+};
+
+const TABS = {
+  browse: {
+    label: 'Browse', cols: ['name', 'min', 'market', 'avg', 'qty', 'vendor'],
+    rows: () => {
+      const q = settings.search.trim().toLowerCase();
+      return items.filter((it) =>
+        (!q || nameOf(it).toLowerCase().includes(q) || String(it.id) === q) &&
+        (settings.kind === 'all' || (settings.kind === 'commodity') === it.commodity));
+    },
+    controls: () => `
+      <input id="search" placeholder="Search item names or IDs…" style="width:280px" value="${esc(settings.search)}">
+      <select id="kind">
+        <option value="all">All items</option><option value="commodity">Commodities</option><option value="item">Items</option>
+      </select>`,
+    empty: 'No items match.',
+  },
+  deals: {
+    label: 'Deals', cols: ['name', 'min', 'avg', 'profit', 'pct', 'qty'],
+    rows: () => dealsOf(items),
+    controls: () => `
+      Max % of average <input id="dealPct" style="width:56px" value="${settings.dealPct}">
+      Min profit <input id="dealMinProfit" style="width:90px" value="${moneyText(settings.dealMinProfit)}">
+      <span class="muted">profit after the 5% AH cut, per unit</span>`,
+    empty: 'No deals match these filters.',
+  },
+  vendor: {
+    label: 'Vendor', cols: ['name', 'min', 'vendor', 'vprofit', 'qty'],
+    rows: () => vendorOf(items),
+    controls: () => `
+      Min profit each <input id="vendorMinProfit" style="width:90px" value="${moneyText(settings.vendorMinProfit)}">
+      <span class="muted">cheapest listing vs what a vendor pays</span>`,
+    empty: 'Nothing is below vendor price. (Vendor prices come from the addon, so log in and /reload once if this stays empty.)',
+  },
+  watch: {
+    label: 'Watchlist', cols: ['name', 'min', 'market', 'avg', 'qty'],
+    rows: () => items.filter((it) => watch.has(it.id)),
+    controls: () => `<span>Click the ☆ next to any item to add it here.</span>`,
+    empty: 'Your watchlist is empty, or nothing on it is listed right now.',
+  },
+  history: {
+    label: 'History',
+    controls: () => {
+      const a = status?.archive;
+      const size = a ? `${a.days} day${a.days === 1 ? '' : 's'} saved, ${(a.bytes / 1048576).toFixed(1)} MB` : '';
+      return `
+      <input id="hq" placeholder="Item name or ID (blank = all)" style="width:220px" value="${esc(hist.q)}">
+      From <input id="hfrom" type="date" value="${hist.from}">
+      to <input id="hto" type="date" value="${hist.to}">
+      Cheapest <input id="hmin" placeholder="min" style="width:70px" value="${esc(hist.minPrice)}">
+      – <input id="hmax" placeholder="max" style="width:70px" value="${esc(hist.maxPrice)}">
+      <button id="hgo">Search</button>
+      <button id="hcsv" title="Download every matching row as a CSV for Excel or Google Sheets">Export CSV</button>
+      <span class="muted">${size}</span>`;
+    },
+  },
+};
+
+// ---------- rendering ----------
+function renderTabs() {
+  $('#tabs').innerHTML = Object.entries(TABS).map(([k, t]) =>
+    `<button data-tab="${k}" class="${k === tab ? 'active' : ''}">${t.label}</button>`).join('');
+  $('#controls').innerHTML = TABS[tab].controls() + '<span class="count" id="count"></span>';
+  const kind = $('#kind');
+  if (kind) kind.value = settings.kind;
+  bindControls();
+}
+
+function sortedRows() {
+  const t = TABS[tab];
+  const rows = t.rows();
+  const [key, dir] = sorts[tab];
+  const get = COLUMNS[key]?.get || COLUMNS.name.get;
+  rows.sort((a, b) => {
+    const x = get(a), y = get(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * dir;
+  });
+  return rows;
+}
+
+function renderTable() {
+  if (tab === 'history') return renderHistory();
+  const t = TABS[tab];
+  if (!items.length) {
+    $('#tableWrap').innerHTML = `<div class="empty">${status?.error ? 'No data: ' + esc(status.error) : 'Loading prices…'}</div>`;
+    $('#count').textContent = '';
+    return;
+  }
+  const rows = sortedRows();
+  $('#count').textContent = `${rows.length.toLocaleString()} item${rows.length === 1 ? '' : 's'}`;
+  if (!rows.length) {
+    $('#tableWrap').innerHTML = `<div class="empty">${esc(t.empty)}</div>`;
+    return;
+  }
+  const [skey, sdir] = sorts[tab];
+  const head = '<th></th>' + t.cols.map((c) =>
+    `<th data-sort="${c}" class="${COLUMNS[c].left ? 'left' : ''} ${c === skey ? 'sorted' : ''}">${COLUMNS[c].label}${c === skey ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+  const body = rows.slice(0, shown).map((it) =>
+    `<tr class="item ${it.id === selectedId ? 'sel' : ''}" data-id="${it.id}">` +
+    `<td class="star ${watch.has(it.id) ? 'on' : ''}" data-star="${it.id}">${watch.has(it.id) ? '★' : '☆'}</td>` +
+    t.cols.map((c) => `<td class="${COLUMNS[c].left ? 'left name' : ''}">${COLUMNS[c].cell(it)}</td>`).join('') + '</tr>').join('');
+  const more = rows.length > shown ? `<div class="more"><button id="more">Show ${Math.min(PAGE, rows.length - shown)} more</button></div>` : '';
+  $('#tableWrap').innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${more}`;
+}
+
+async function renderDetail() {
+  const el = $('#detail');
+  let it = items.find((x) => x.id === selectedId);
+  if (!it && selectedId != null) {
+    // not listed right now (e.g. picked from History): show what we know plus the chart
+    const r = histRows?.find((x) => x.id === selectedId);
+    el.classList.add('open');
+    el.innerHTML = `
+      <h2 style="color:${r?.quality != null ? QUALITY[r.quality] : '#8f96a6'}">${esc(r?.name || 'Item #' + selectedId)}</h2>
+      <div class="sub">Item ID ${selectedId} · not listed in the latest data</div>
+      <div class="actions"><button id="closeBtn">Close</button></div>
+      <div id="chart" class="muted">Loading history…</div>`;
+    $('#closeBtn').onclick = () => { selectedId = null; renderDetail(); renderTable(); };
+    const id = selectedId;
+    const chart = await itemChart({ id });
+    if (selectedId === id && $('#chart')) $('#chart').outerHTML = `<div id="chart">${chart}</div>`;
+    return;
+  }
+  if (!it) { el.classList.remove('open'); return; }
+  el.classList.add('open');
+  const deal = it.avg > 0 ? Math.round((it.min / it.avg) * 100) : null;
+  el.innerHTML = `
+    <h2 style="color:${colorOf(it)}">${esc(nameOf(it))}</h2>
+    <div class="sub">Item ID ${it.id} · ${it.commodity ? 'commodity' : 'item'}</div>
+    <div class="actions">
+      <button id="watchBtn">${watch.has(it.id) ? '★ Watching' : '☆ Watch'}</button>
+      <button id="copyBtn" title="Copy a /fah command for this item">Copy /fah ${it.id}</button>
+      <button id="closeBtn">Close</button>
+    </div>
+    <div class="stats">
+      <div>Cheapest</div><div>${money(it.min)}${deal != null ? ` <span class="muted">(${deal}% of avg)</span>` : ''}</div>
+      <div>Market</div><div>${money(it.market)}</div>
+      <div>Average</div><div>${money(it.avg)} <span class="muted">(${it.days} day${it.days === 1 ? '' : 's'})</span></div>
+      <div>Vendor pays</div><div>${money(it.vendor)}</div>
+      <div>Listed</div><div>${it.qty.toLocaleString()} in ${it.auctions.toLocaleString()} auctions</div>
+    </div>
+    <div id="chart" class="muted">Loading history…</div>`;
+  $('#watchBtn').onclick = () => toggleWatch(it.id);
+  $('#closeBtn').onclick = () => { selectedId = null; renderDetail(); renderTable(); };
+  $('#copyBtn').onclick = async () => {
+    try { await navigator.clipboard.writeText(`/fah ${it.id}`); $('#copyBtn').textContent = 'Copied'; } catch { }
+  };
+  const chart = await itemChart(it);
+  if (selectedId === it.id && $('#chart')) $('#chart').outerHTML = `<div id="chart">${chart}</div>`;
+}
+
+// points: [{ t (unix seconds), min, market }], oldest first. Drawn as steps, because the
+// archive only saves a row when the price moves: the price held until the next point.
+function chartSVG(points, note) {
+  if (points.length < 2) {
+    return `<div class="muted">${note || 'Not enough history yet for a chart. Leave the dashboard running to build it up.'}</div>`;
+  }
+  const W = 350, H = 200, L = 64, R = 8, T = 10, B = 24;
+  const vals = points.flatMap((p) => [p.market, p.min]).filter((v) => v != null);
+  if (!vals.length) return '<div class="muted">No prices in this period.</div>';
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) { lo = Math.max(0, lo * 0.9); hi = hi * 1.1 + 1; }
+  const t0 = points[0].t, t1 = Math.max(points.at(-1).t, t0 + 1);
+  const x = (t) => L + ((t - t0) * (W - L - R)) / (t1 - t0);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const when = (t) => new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const line = (key, color) => {
+    let d = '', prev = null;
+    points.forEach((p, i) => {
+      if (p[key] == null) { prev = null; return; } // gap while it wasn't listed
+      const X = x(p.t).toFixed(1), Y = y(p[key]).toFixed(1);
+      d += prev == null ? `M${X},${Y}` : `H${X}V${Y}`;
+      prev = p[key];
+      const next = points[i + 1];
+      if (!next) d += `H${x(t1).toFixed(1)}`;
+    });
+    const dots = points.map((p) => p[key] == null ? '' :
+      `<circle cx="${x(p.t)}" cy="${y(p[key])}" r="2.5" fill="${color}"><title>${when(p.t)}: ${moneyText(p[key])}</title></circle>`).join('');
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"/>${dots}`;
+  };
+  const ticks = [lo, (lo + hi) / 2, hi].map((v) =>
+    `<text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${moneyText(v)}</text>
+     <line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#262932"/>`).join('');
+  const day = (t) => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const labels = `<text x="${L}" y="${H - 6}">${day(t0)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${day(t1)}</text>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${ticks}${labels}${line('market', '#59c7fa')}${line('min', '#66d973')}</svg>
+    <div class="legend"><span style="color:#59c7fa">Market</span><span style="color:#66d973">Cheapest</span>${note ? `<span class="note muted" style="margin-left:auto">${note}</span>` : ''}</div>`;
+}
+
+async function itemChart(it) {
+  // Prefer the archive (every saved change over the last 30 days); fall back to daily history.
+  const from = new Date(Date.now() - 29 * 86400000).toLocaleDateString('en-CA');
+  const arch = await (await fetch(`/api/archive?ids=${it.id}&from=${from}&limit=5000`)).json();
+  let points = (arch.rows || []).map((r) => ({ t: r.t, min: r.min, market: r.market }));
+  let note = `${points.length} saved changes, last 30 days`;
+  if (points.length < 2) {
+    const daily = await (await fetch(`/api/history?id=${it.id}`)).json();
+    points = daily.map((p) => ({ t: Date.parse(p.date + 'T12:00:00') / 1000, min: p.min, market: p.market }));
+    note = 'daily averages';
+  }
+  if (points.length) {
+    // the latest values still hold now
+    const now = (status?.updated) || Math.floor(Date.now() / 1000);
+    if (now > points.at(-1).t) points.push({ ...points.at(-1), t: now });
+  }
+  return chartSVG(points, points.length >= 2 ? note : 'Not enough history yet for a chart. It builds up as the dashboard keeps running.');
+}
+
+// ---------- History tab ----------
+const hist = Object.assign({ q: '', from: '', to: '', minPrice: '', maxPrice: '' }, store('hist') || {});
+let histRows = null, histInfo = '';
+
+function histParams() {
+  const p = new URLSearchParams();
+  if (hist.q) p.set('q', hist.q);
+  if (hist.from) p.set('from', hist.from);
+  if (hist.to) p.set('to', hist.to);
+  const lo = parseMoney(hist.minPrice), hi = parseMoney(hist.maxPrice);
+  if (lo != null) p.set('minPrice', lo);
+  if (hi != null) p.set('maxPrice', hi);
+  return p;
+}
+
+async function loadHistory() {
+  $('#tableWrap').innerHTML = '<div class="empty">Searching the archive…</div>';
+  const res = await (await fetch('/api/archive?' + histParams())).json();
+  if (res.disabled) {
+    histRows = [];
+    histInfo = 'The archive is turned off ("archive": false in config.json).';
+  } else {
+    if (!hist.from) hist.from = res.filters.from;
+    if (!hist.to) hist.to = res.filters.to;
+    histRows = res.rows.reverse(); // newest first
+    histInfo = res.truncated
+      ? `newest ${res.rows.length.toLocaleString()} of ${res.total.toLocaleString()} rows (export to get all)`
+      : `${res.total.toLocaleString()} rows`;
+  }
+  renderTabs();
+  renderHistory();
+}
+
+function renderHistory() {
+  $('#count').textContent = histInfo;
+  if (!histRows) { loadHistory(); return; }
+  if (!histRows.length) {
+    $('#tableWrap').innerHTML = '<div class="empty">No saved prices match. The archive fills up as downloads and in-game scans come in.</div>';
+    return;
+  }
+  // change vs the item's previous row (rows are newest first, so the previous one is further down)
+  const prevMin = new Map();
+  const change = new Array(histRows.length);
+  for (let i = histRows.length - 1; i >= 0; i--) {
+    const r = histRows[i];
+    const p = prevMin.get(r.id);
+    change[i] = p != null && r.min != null ? (r.min - p) / Math.max(p, 1) : null;
+    if (r.min != null) prevMin.set(r.id, r.min);
+  }
+  const when = (t) => new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const body = histRows.slice(0, shown).map((r, i) => {
+    const it = items.find((x) => x.id === r.id) || { id: r.id, name: r.name, quality: r.quality };
+    const ch = change[i];
+    const chText = ch == null ? '' : `<span style="color:${ch < 0 ? 'var(--good)' : ch > 0 ? 'var(--bad)' : 'var(--muted)'}">${ch > 0 ? '+' : ''}${Math.round(ch * 100)}%</span>`;
+    return `<tr class="item ${r.id === selectedId ? 'sel' : ''}" data-id="${r.id}">
+      <td class="left muted">${when(r.t)}</td>
+      <td class="left name"><span style="color:${colorOf(it)}">${esc(r.name || nameOf(it))}</span></td>
+      <td>${r.qty === 0 ? '<span class="muted">not listed</span>' : money(r.min)}</td>
+      <td>${r.qty === 0 ? '' : money(r.market)}</td>
+      <td>${r.qty.toLocaleString()}</td>
+      <td>${chText}</td></tr>`;
+  }).join('');
+  const more = histRows.length > shown ? `<div class="more"><button id="more">Show ${Math.min(PAGE, histRows.length - shown)} more</button></div>` : '';
+  $('#tableWrap').innerHTML = `<table><thead><tr>
+    <th class="left">Time</th><th class="left">Item</th><th>Cheapest</th><th>Market</th><th>Listed</th><th>Change</th>
+    </tr></thead><tbody>${body}</tbody></table>${more}`;
+}
+
+function renderStatus() {
+  if (!status) return;
+  const parts = [];
+  parts.push(status.updated
+    ? `${status.source === 'scan' ? 'In-game scan' : 'Data'} ${ago(status.updated * 1000)}`
+    : 'No data yet');
+  parts.push(`house ${status.houses.join(', ')}`);
+  parts.push(`${status.itemCount.toLocaleString()} items`);
+  if (status.running) parts.push('updating…');
+  else if (status.nextRun) parts.push(`next check in ${Math.max(0, Math.round((status.nextRun - Date.now()) / 60000))}m`);
+  $('#status').textContent = parts.join('  ·  ');
+  $('#updateBtn').disabled = status.running;
+
+  const banner = $('#banner');
+  banner.className = '';
+  if (status.error) {
+    banner.className = 'error';
+    banner.textContent = `Last update failed: ${status.error}`;
+  } else if (status.namesError) {
+    banner.textContent = `Couldn't read item names from the addon: ${status.namesError}`;
+  } else if (!status.nameCount) {
+    banner.textContent = 'Item names and vendor prices come from the addon. Log in, wait a few seconds, then /reload or log out once so it can save them.';
+  } else {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+}
+
+function renderAll() { renderTabs(); renderTable(); renderDetail(); }
+
+// ---------- events ----------
+function saveSettings() { store('settings', settings); }
+
+function bindControls() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('input', fn); };
+  let timer;
+  on('search', (e) => {
+    settings.search = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => { shown = PAGE; saveSettings(); renderTable(); }, 150);
+  });
+  on('kind', (e) => { settings.kind = e.target.value; shown = PAGE; saveSettings(); renderTable(); });
+  on('dealPct', (e) => { const v = Number(e.target.value); if (v > 0 && v <= 100) { settings.dealPct = v; saveSettings(); renderTable(); } });
+  on('dealMinProfit', (e) => { const v = parseMoney(e.target.value); if (v != null) { settings.dealMinProfit = v; saveSettings(); renderTable(); } });
+  const hv = (id, key) => on(id, (e) => { hist[key] = e.target.value; store('hist', hist); });
+  hv('hq', 'q'); hv('hfrom', 'from'); hv('hto', 'to'); hv('hmin', 'minPrice'); hv('hmax', 'maxPrice');
+  const go = document.getElementById('hgo');
+  if (go) {
+    const run = () => { shown = PAGE; histRows = null; loadHistory(); };
+    go.onclick = run;
+    for (const id of ['hq', 'hmin', 'hmax']) {
+      document.getElementById(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    }
+    document.getElementById('hcsv').onclick = () => { window.location = '/api/archive.csv?' + histParams(); };
+  }
+  on('vendorMinProfit', (e) => { const v = parseMoney(e.target.value); if (v != null) { settings.vendorMinProfit = v; saveSettings(); renderTable(); } });
+}
+
+function toggleWatch(id) {
+  watch.has(id) ? watch.delete(id) : watch.add(id);
+  store('watch', [...watch]);
+  renderTable();
+  renderDetail();
+}
+
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  tab = b.dataset.tab;
+  store('tab', tab);
+  shown = PAGE;
+  renderTabs();
+  renderTable();
+});
+
+$('#tableWrap').addEventListener('click', (e) => {
+  const star = e.target.closest('[data-star]');
+  if (star) { toggleWatch(Number(star.dataset.star)); return; }
+  const th = e.target.closest('th[data-sort]');
+  if (th) {
+    const key = th.dataset.sort;
+    const [cur, dir] = sorts[tab];
+    sorts[tab] = [key, cur === key ? -dir : (COLUMNS[key].left ? 1 : -1)];
+    store('sorts', sorts);
+    renderTable();
+    return;
+  }
+  if (e.target.id === 'more') { shown += PAGE; renderTable(); return; }
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) {
+    selectedId = Number(tr.dataset.id);
+    renderTable();
+    renderDetail();
+  }
+});
+
+$('#updateBtn').addEventListener('click', async () => {
+  $('#updateBtn').disabled = true;
+  $('#status').textContent = 'Updating…';
+  status = await (await fetch('/api/update', { method: 'POST' })).json();
+  await refresh(true);
+});
+
+function renderNotifyBtn() { $('#notifyBtn').textContent = `Notifications: ${notify ? 'on' : 'off'}`; }
+$('#notifyBtn').addEventListener('click', async () => {
+  if (!('Notification' in window)) return alert('This browser has no desktop notifications.');
+  if (!notify && Notification.permission !== 'granted') {
+    if (await Notification.requestPermission() !== 'granted') return;
+  }
+  notify = !notify;
+  store('notify', notify);
+  knownDeals = null;
+  renderNotifyBtn();
+});
+
+// Announce deals and vendor flips that weren't there at the previous update.
+function announce() {
+  const current = new Map();
+  for (const it of dealsOf(items)) current.set('d' + it.id, `${nameOf(it)}: deal, ${moneyText(it.profit)} profit`);
+  for (const it of vendorOf(items)) current.set('v' + it.id, `${nameOf(it)}: ${moneyText(it.vprofit)} under vendor`);
+  if (knownDeals && notify) {
+    const fresh = [...current.entries()].filter(([k]) => !knownDeals.has(k)).map(([, v]) => v);
+    if (fresh.length) {
+      new Notification(`ForeverAH: ${fresh.length} new opportunit${fresh.length === 1 ? 'y' : 'ies'}`,
+        { body: fresh.slice(0, 4).join('\n') + (fresh.length > 4 ? `\n…and ${fresh.length - 4} more` : '') });
+    }
+  }
+  knownDeals = new Set(current.keys());
+}
+
+// ---------- data loading ----------
+async function refresh(force) {
+  try {
+    status = await (await fetch('/api/status')).json();
+  } catch {
+    $('#status').textContent = 'Can\'t reach the server. Is "node server.mjs" still running?';
+    return;
+  }
+  const namesKey = `${status.updated}|${status.nameCount}`;
+  if (force || namesKey !== lastUpdated) {
+    lastUpdated = namesKey;
+    items = await (await fetch('/api/items')).json();
+    announce();
+    renderTable();
+    renderDetail();
+  }
+  renderStatus();
+}
+
+renderNotifyBtn();
+renderTabs();
+renderTable();
+refresh(true);
+setInterval(refresh, 30000);
+setInterval(renderStatus, 15000);
+</script>
+</body>
+</html>

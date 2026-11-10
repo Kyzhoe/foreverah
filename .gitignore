@@ -1,0 +1,7 @@
+# private: your Battle.net secret and access token
+config.json
+state.json
+# downloads; rebuilt on every run
+cache/
+node_modules/
+*.tmp

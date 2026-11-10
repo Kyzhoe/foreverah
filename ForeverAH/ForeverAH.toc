@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: ForeverAH
+## Notes: Auction house prices from Blizzard's API, plus deals and selling tools.
+## Version: 0.5.0
+## SavedVariables: ForeverAHDB
+Data.lua
+Core.lua
+Style.lua
+AH.lua
+Scan.lua
+UI.lua
+Search.lua
+Deals.lua
+Vendor.lua
+Sell.lua

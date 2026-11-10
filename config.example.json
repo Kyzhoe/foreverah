@@ -1,0 +1,14 @@
+{
+  "clientId": "PASTE_YOUR_CLIENT_ID",
+  "clientSecret": "PASTE_YOUR_CLIENT_SECRET",
+  "region": "us",
+  "rulesetId": 1,
+  "houseIds": [],
+  "addonDataFile": "C:/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/ForeverAH/Data.lua",
+  "intervalMinutes": 60,
+  "marketPercent": 20,
+  "port": 8787,
+  "archive": true,
+  "archiveMinChangePct": 5,
+  "archiveQtyChangePct": 25
+}
