@@ -1,11 +1,13 @@
-# Downloads WoW: Forever auction prices every hour and saves them to this repository.
-# Blizzard refreshes its snapshot around :13 past the hour, so this runs at :25.
+# Downloads WoW: Forever auction prices and saves them to this repository.
+# Blizzard refreshes its snapshot about once an hour. GitHub sometimes delays or skips
+# scheduled runs when it's busy, so this checks every 15 minutes; a run that finds no new
+# snapshot doesn't make a commit.
 # Needs two repository secrets: BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET.
 name: Collect prices
 
 on:
   schedule:
-    - cron: '25 * * * *'
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch: # lets you run it by hand from the Actions tab
 
 permissions:
