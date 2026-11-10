@@ -18,7 +18,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       TZ: America/Los_Angeles # archive files are named by your local date
     steps:
@@ -36,6 +36,13 @@ jobs:
           FAH_RULESET: '1'
           FAH_HOUSES: '113'
         run: node fetch-prices.mjs update
+
+      - name: Look up new item names
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          FAH_REGION: us
+        run: node fetch-prices.mjs items
 
       - name: Save to the repository
         run: |

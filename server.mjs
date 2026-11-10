@@ -64,6 +64,7 @@ async function runUpdate() {
   try {
     if (REMOTE) await pullFromGitHub();
     else latest = await update(ctx, (m) => log(String(m).trim()));
+    await loadBlizzardNames();
     lastError = null;
   } catch (e) {
     lastError = e.message;
@@ -166,6 +167,34 @@ function parseLua(text) {
 }
 
 let names = {}, namesFile = null, namesMtime = 0, namesError = null;
+let gameNames = {};      // from the addon's saved variables (most accurate for Forever)
+let blizzardNames = {};  // from data/items.json, looked up on Blizzard's web API
+
+// Names from the game win; Blizzard's item data fills in the rest.
+function mergeNames() {
+  names = { ...blizzardNames, ...gameNames };
+}
+
+async function loadBlizzardNames() {
+  try {
+    let raw;
+    if (REMOTE) {
+      const res = await fetch(remoteArchive.raw('data/items.json'), { headers: { 'Cache-Control': 'no-cache' } });
+      if (!res.ok) return;
+      raw = await res.json();
+    } else {
+      raw = JSON.parse(await readFile(path.join(HERE, 'data', 'items.json'), 'utf8'));
+    }
+    const next = {};
+    for (const [id, v] of Object.entries(raw)) next[id] = { name: v[0], quality: v[1], vendor: v[2], source: v[3] };
+    const added = Object.keys(next).length - Object.keys(blizzardNames).length;
+    blizzardNames = next;
+    mergeNames();
+    if (added) log(`Loaded ${Object.keys(next).length} item names from Blizzard's item data.`);
+  } catch {
+    // no items.json yet
+  }
+}
 let scan = null; // last in-game scan saved by the addon: { time, items: { id: {1: min, 2: market, 3: qty, 4: auctions} } }
 
 async function findSavedVariables() {
@@ -194,7 +223,8 @@ async function loadNames() {
     for (const [id, v] of Object.entries(raw)) {
       if (v && v[1]) next[id] = { name: v[1], vendor: v[2] || 0, quality: v[3] ?? 1 };
     }
-    names = next;
+    gameNames = next;
+    mergeNames();
     namesError = null;
     const s = vars.ForeverAHDB?.scan;
     scan = s && s.time && s.items ? s : null;
@@ -208,7 +238,7 @@ async function loadNames() {
         if (saved) log(`Archived ${saved} price changes from the scan.`);
       }
     }
-    log(`Loaded ${Object.keys(names).length} item names from the addon's saved variables.`);
+    log(`Loaded ${Object.keys(gameNames).length} item names from the addon's saved variables.`);
   } catch (e) {
     namesError = e.message;
     log(`Couldn't read item names: ${e.message}`);

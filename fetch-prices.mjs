@@ -45,7 +45,7 @@ async function readJson(file, fallback) {
 
 async function writeAtomic(file, text) {
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp';
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, text, 'utf8');
   await rename(tmp, file);
 }
@@ -106,7 +106,14 @@ const saveState = (state) => writeAtomic(STATE_PATH, JSON.stringify(state, null,
 
 // ---------- Blizzard API ----------
 
-async function getToken(ctx, force = false) {
+// Several requests can need a token at once; they share one token request.
+function getToken(ctx, force = false) {
+  if (!force && ctx.tokenPromise) return ctx.tokenPromise;
+  ctx.tokenPromise = fetchToken(ctx, force).finally(() => { ctx.tokenPromise = null; });
+  return ctx.tokenPromise;
+}
+
+async function fetchToken(ctx, force) {
   const { clientId, clientSecret } = ctx.cfg;
   if (!clientId || !clientSecret || clientId.startsWith('PASTE') || clientSecret.startsWith('PASTE')) {
     throw new Error('Put your Client ID and Client Secret from develop.battle.net into config.json.');
@@ -131,9 +138,10 @@ async function getToken(ctx, force = false) {
 
 // GET a Game Data route in the Forever namespace. Node's fetch asks for gzip and
 // unpacks it automatically. Retries on 429/5xx and refreshes an expired token once.
-async function api(ctx, route, { ifModifiedSince } = {}) {
+async function api(ctx, route, { ifModifiedSince, namespace } = {}) {
   const { region } = ctx.cfg;
-  const url = `https://${region}.api.blizzard.com${route}?namespace=dynamic-forever-${region}&locale=en_US`;
+  const ns = namespace || `dynamic-forever-${region}`;
+  const url = `https://${region}.api.blizzard.com${route}?namespace=${ns}&locale=en_US`;
   let refreshed = false;
   for (let attempt = 1; ; attempt++) {
     const headers = { Authorization: `Bearer ${await getToken(ctx)}` };
@@ -530,6 +538,76 @@ async function cmdUpdate(ctx) {
   await update(ctx);
 }
 
+// ---------- item names ----------
+// data/items.json: { [itemId]: [name, quality (0 poor .. 5 legendary), vendorPrice, source] }
+// Each item ID is looked up once. Forever's own item data is tried first; items it doesn't
+// have are tried in Classic Era, Classic and Retail item data. Misses are retried weekly.
+
+const ITEMS_PATH = path.join(HERE, 'data', 'items.json');
+const MISSING_PATH = path.join(HERE, 'data', 'items-missing.json');
+const SOURCE_LABEL = { forever: 'forever', classic1x: 'classic-era', classic: 'classic', retail: 'retail' };
+const QUALITY = { POOR: 0, COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5, ARTIFACT: 6, HEIRLOOM: 7 };
+
+async function lookupItem(ctx, id, namespaces) {
+  for (const ns of namespaces) {
+    try {
+      const { data } = await api(ctx, `/data/wow/item/${id}`, { namespace: ns });
+      if (data?.name) {
+        return [data.name, QUALITY[data.quality?.type] ?? 1, data.sell_price ?? 0, SOURCE_LABEL[ns.split('-').slice(1, -1).join('-') || 'retail']];
+      }
+    } catch (e) {
+      if (e.status !== 404) throw e;
+    }
+  }
+  return null;
+}
+
+export async function updateItemNames(ctx, ids, log = console.log) {
+  const r = ctx.cfg.region;
+  const namespaces = [`static-forever-${r}`, `static-classic1x-${r}`, `static-classic-${r}`, `static-${r}`];
+  const items = await readJson(ITEMS_PATH, {});
+  const missing = await readJson(MISSING_PATH, {});
+  const now = Math.floor(Date.now() / 1000);
+  const todo = [...new Set(ids.map(String))]
+    .filter((id) => !items[id] && !(missing[id] && now - missing[id] < 7 * 86400));
+  if (!todo.length) {
+    log('Item names: nothing new to look up.');
+    return { found: 0, missing: 0 };
+  }
+  log(`Item names: looking up ${todo.length} items...`);
+  let found = 0, notFound = 0, next = 0;
+  const bySource = {};
+  async function worker() {
+    while (next < todo.length) {
+      const id = todo[next++];
+      const info = await lookupItem(ctx, id, namespaces);
+      if (info) {
+        items[id] = info;
+        delete missing[id];
+        found++;
+        bySource[info[3]] = (bySource[info[3]] || 0) + 1;
+      } else {
+        missing[id] = now;
+        notFound++;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: 8 }, worker)); // 8 at a time, well under Blizzard's limits
+  await writeAtomic(ITEMS_PATH, JSON.stringify(items));
+  await writeAtomic(MISSING_PATH, JSON.stringify(missing));
+  log(`Item names: found ${found} (${Object.entries(bySource).map(([k, v]) => `${v} from ${k}`).join(', ') || 'none'}), not found ${notFound}. ` +
+    `${Object.keys(items).length} names known in total.`);
+  return { found, missing: notFound };
+}
+
+async function cmdItems(ctx) {
+  const latest = await readJson(ctx.cfg.latestFile || path.join(HERE, 'data', 'latest.json'), null);
+  let ids;
+  if (latest?.items) ids = Object.keys(latest.items);
+  else ids = [...(await update(ctx)).items.keys()].map(String);
+  await updateItemNames(ctx, ids);
+}
+
 async function cmdWatch(ctx) {
   console.log(`Updating every ${ctx.cfg.intervalMinutes} minutes. Press Ctrl+C to stop.`);
   for (;;) {
@@ -554,8 +632,9 @@ async function main() {
     case 'item': return cmdItem(ctx, args);
     case 'update': return cmdUpdate(ctx);
     case 'watch': return cmdWatch(ctx);
+    case 'items': return cmdItems(ctx);
     default:
-      throw new Error(`Unknown command "${cmd}". Use list, find, item, update or watch.`);
+      throw new Error(`Unknown command "${cmd}". Use list, find, item, items, update or watch.`);
   }
 }
 
