@@ -32,7 +32,7 @@ export class Archive {
     this.minChangePct = minChangePct;
     this.qtyChangePct = qtyChangePct;
     this.compressAfterDays = compressAfterDays;
-    this.statePath = path.join(dir, 'last.json');
+    this.statePath = dir ? path.join(dir, 'last.json') : null;
     this.queue = Promise.resolve();
   }
 
