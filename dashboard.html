@@ -375,7 +375,7 @@ async function itemChart(it) {
 
 // ---------- History tab ----------
 const hist = Object.assign({ q: '', from: '', to: '', minPrice: '', maxPrice: '' }, store('hist') || {});
-let histRows = null, histInfo = '';
+let histRows = null, histInfo = '', histError = null;
 
 function histParams() {
   const p = new URLSearchParams();
@@ -389,8 +389,23 @@ function histParams() {
 }
 
 async function loadHistory() {
+  histError = null;
   $('#tableWrap').innerHTML = '<div class="empty">Searching the archive…</div>';
-  const res = await (await fetch('/api/archive?' + histParams())).json();
+  let res;
+  try {
+    const r = await fetch('/api/archive?' + histParams());
+    res = await r.json();
+    if (!r.ok) throw new Error(r.status === 404
+      ? 'The dashboard server is an older version. Restart it (Ctrl+C, then node server.mjs).'
+      : res.error || `server answered ${r.status}`);
+  } catch (e) {
+    histRows = [];
+    histInfo = '';
+    renderTabs();
+    histError = `<div class="empty" style="color:var(--bad)">Couldn't search the archive: ${esc(e.message)}</div>`;
+    $('#tableWrap').innerHTML = histError;
+    return;
+  }
   if (res.disabled) {
     histRows = [];
     histInfo = 'The archive is turned off ("archive": false in config.json).';
@@ -409,6 +424,7 @@ async function loadHistory() {
 function renderHistory() {
   $('#count').textContent = histInfo;
   if (!histRows) { loadHistory(); return; }
+  if (histError) { $('#tableWrap').innerHTML = histError; return; }
   if (!histRows.length) {
     $('#tableWrap').innerHTML = '<div class="empty">No saved prices match. The archive fills up as downloads and in-game scans come in.</div>';
     return;
